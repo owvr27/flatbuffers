@@ -135,6 +135,7 @@ func TestAll(t *testing.T) {
 
 	// Verify bounds checking
 	CheckByteVectorBoundsChecking(t.Fatalf)
+	CheckVectorLenBoundsChecking(t.Fatalf)
 
 	CheckSharedStrings(t.Fatalf)
 	CheckEmptiedBuilder(t.Fatalf)
@@ -2518,6 +2519,48 @@ func CheckByteVectorBoundsChecking(fail func(string, ...interface{})) {
 	result = table.ByteVector(0)
 	if result == nil || !bytes.Equal(result, []byte("abc")) {
 		fail("ByteVector should work correctly for valid data")
+	}
+}
+
+// CheckVectorLenBoundsChecking ensures VectorLen handles malformed input safely.
+func CheckVectorLenBoundsChecking(fail func(string, ...interface{})) {
+	// Test case 1: Offset beyond buffer size
+	table := &flatbuffers.Table{
+		Bytes: []byte{0x04, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00}, // Small buffer
+		Pos:   0,
+	}
+	if result := table.VectorLen(100); result != 0 { // Offset way beyond buffer
+		fail("VectorLen should return 0 for offset beyond buffer")
+	}
+
+	// Test case 2: Relative offset points beyond the buffer
+	// (e.g. a truncated payload whose vtable entry was not truncated)
+	truncatedBytes := make([]byte, 20)
+	truncatedBytes[0] = 200 // relative offset far beyond the buffer
+	table = &flatbuffers.Table{Bytes: truncatedBytes, Pos: 0}
+	if result := table.VectorLen(0); result != 0 {
+		fail("VectorLen should return 0 for relative offset beyond buffer")
+	}
+
+	// Test case 3: Offset beyond buffer size when combined with Pos
+	table = &flatbuffers.Table{
+		Bytes: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+		Pos:   6,
+	}
+	if result := table.VectorLen(4); result != 0 {
+		fail("VectorLen should return 0 when Pos plus offset exceeds buffer")
+	}
+
+	// Test case 4: Valid case should still work
+	// Construct: [relative offset: 4] [vector length: 3] [data: 'a', 'b', 'c']
+	validBytes := []byte{
+		4, 0, 0, 0, // relative offset to vector data (at position 4)
+		3, 0, 0, 0, // vector length (3)
+		'a', 'b', 'c', // actual vector data
+	}
+	table = &flatbuffers.Table{Bytes: validBytes, Pos: 0}
+	if result := table.VectorLen(0); result != 3 {
+		fail("VectorLen should work correctly for valid data")
 	}
 }
 
